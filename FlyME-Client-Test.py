@@ -20,7 +20,7 @@ print >>sys.stderr, 'Connecting to %s port %s' % server_address
 sock.connect(server_address)
 
 try:
-    message = '1,22222,333,444,555,666,065,0000'
+    message = '001,00000,000,000,000,000,001,00'
     print >>sys.stderr, 'Sending "%s"' % message
     sock.sendall(message)
 

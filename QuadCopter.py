@@ -63,24 +63,17 @@ class QuadCopter():
     
         self.hardOverride   = None
         self.vehicle        = None
+        self.Lidar          = None
 
 
 ################## Function to search for PX4 FMU connect with RPi ###################
     def FindPixhawk(self):
         ListPortInfo = serial.tools.list_ports.comports()
-        foundPX4 = False
-        try:
-            for list in ListPortInfo:
+        for list in ListPortInfo:
+            if (list.product):
                 if (list.product.find("PX4") != -1):
-                    foundPX4 = True
-                    break
-        except:
-            pass
-    
-        if (foundPX4):
-            return list.device
-        else:
-            return None
+                    return list.device
+        return None
 
 ################################ Change RC value ###################################
     def ChangeRCVal(self, Steps, Delay, Ch1, Ch2, Ch3, Ch4, Ch5):
@@ -98,7 +91,7 @@ class QuadCopter():
             self.RC_Ch4 = self.RC_Ch4 +ch4_step
             self.RC_Ch5 = self.RC_Ch5 +ch5_step
 
-            self.hardOverride.Send(RC_Ch1, RC_Ch2, RC_Ch3, RC_Ch4, RC_Ch5)
+            self.hardOverride.Send(self.RC_Ch1, self.RC_Ch2, self.RC_Ch3, self.RC_Ch4, self.RC_Ch5)
             time.sleep(Delay)
     
         #Set final RC value to desire value
@@ -107,7 +100,7 @@ class QuadCopter():
         self.RC_Ch3 = Ch3
         self.RC_Ch4 = Ch4
         self.RC_Ch5 = Ch5
-        hardOverride.Send(self.RC_Ch1, self.RC_Ch2, self.RC_Ch3, self.RC_Ch4, self.RC_Ch5)
+        self.hardOverride.Send(self.RC_Ch1, self.RC_Ch2, self.RC_Ch3, self.RC_Ch4, self.RC_Ch5)
         return
 
 ################## Check whether aircraft is armed or not armed ####################
@@ -126,6 +119,10 @@ class QuadCopter():
             time.sleep(1)
             wait_count = wait_count+1
         return True
+
+############################# Check Aircraft Arming ############################
+    def isArm(self):
+        return self.vehicle.armed
 
 ############################# Aircraft arming sequence ############################
     def ArmAircraftLoiter(self, Step, WaitDelay):
@@ -343,48 +340,72 @@ class QuadCopter():
         stdout.flush()
         return
 
-    
-############################## Function Start ############################
-    def Start(self, Height):
-        self.mymutex = Lock()
 
-        #Default desired height is 1 meter
-        self.Desired_Height=1.0
+############################## Function Connect device ############################
+    def ConnectDevices(self, ConnectLidar, ConnectCamera):
+        
+        #Connect Pixhawk (Pixhawk)
         try:
-            self.Desired_Height =Height
+            portname = self.FindPixhawk();
+            #Connect to pixhawk
+            self.vehicle = connect(portname, wait_ready=True, baud=115200)
+            print "Connect Pixhawk at port ",
+            print portname
         except:
-            print "ERROR: Cannot convert argument to number"
-            return False
+            print "Error: Pixhawk cannot be connected!"
+            return 1
+
+        #Connect HardOverride device
+        self.hardOverride = HardOverride()
+        if (self.hardOverride.Connect()==False):
+            return 2
+
+        #Connect Lidar device
+        if (ConnectLidar):
+            self.lidar = Lidar()
+            if (self.lidar.Connect()==False):
+                return 3
+        
+
+        #When no error in connection, return 0
+        return 0
+
+############################## Function Take Off ##############################
+    def TakeOff(self, Height):
+        self.Desired_Height=Height
+        self.mymutex = Lock()
+        
+        #Start RC height thread
+        try:
+            thread.start_new_thread(self.RCHeightLoop, ())
+        except:
+            print "Error: Unable to start height control loop"
+            self.Stop()
+            return self.Stop()
+        
+        #Wait until height aircraft gains some height
+        height_threshold = 0.7*self.Desired_Height
+        while (self.Aircraft_Height<height_threshold):
+            time.sleep(0.1)
+        
+        if (self.ldar != None):
+            #Activate Lidar reading and obstacle thread
+            try:
+                thread.start_new_thread(self.LidarReadingLoop, ())
+            except:
+                print "Error: Unable to lidar reading loop"
+                return self.Stop()
+            
+        return True
+
+############################## Function Start ############################
+    def Start(self):
 
         #Parameters of the aircraft
         self.Aircraft_Armed=0
         self.Aircraft_Height =0
         self.Aircraft_Velocity=[0 for i in range(3)]
         self.AirCraft_Battery=0
-                         
-        #Connect Pixhawk (Pixhawk)
-        try:
-            portname = self.FindPixhawk();
-            #Connect to pixhawk
-            vehicle = connect(portname, wait_ready=True, baud=115200)
-            print "Connect Pixhawk at port ",
-            print portname
-        except:
-            print "Error: Pixhawk cannot be connected!"
-            return False
-
-                         
-        #Connect Lidar device
-        self.lidar = Lidar()
-
-        #Connect HardOverride device
-        self.hardOverride = HardOverride()
-
-        if (lidar.Connect()==False):
-            return False
-
-        if (hardOverride.Connect()==False):
-            return False
 
         #Start the thread loop
         self.Loop = True
@@ -419,26 +440,9 @@ class QuadCopter():
         
         #Wait until override loop ready
         time.sleep(1)
-
-        #Start RC height thread
-        try:
-            thread.start_new_thread(self.RCHeightLoop, ())
-        except:
-            print "Error: Unable to start height control loop"
-            self.Stop()
-            return self.Stop()
-
-        #Wait until height aircraft gains some height
-        height_threshold = 0.7*self.Desired_Height
-        while (self.Aircraft_Height<height_threshold):
-            time.sleep(0.1)
-
-        #Activate Lidar reading and obstacle thread
-        try:
-            thread.start_new_thread(self.LidarReadingLoop, ())
-        except:
-            print "Error: Unable to lidar reading loop"
-            return self.Stop()
+        
+        #Spin motor and wait for other command
+        self.ChangeRCVal(10, 0.1, 1500, 1500, 1500, 1500, 2000)
 
         return True
 
