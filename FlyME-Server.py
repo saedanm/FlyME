@@ -2,7 +2,6 @@
 The code is designed to be a server running on RPi waiting for client to initiate drone launching
 Creator:            Mana Saedan
 Date Last Edited:   4 Febuary 2017
-
 Development Logs:
     - Server waiting for client to connect
     - Data format from client (32-byte-string):  mode,height,roll,pitch,yaw,angle,cheksum,...
@@ -29,13 +28,16 @@ def DecodeTCP(Mode, Height, Roll, Pitch, Yaw, Angle):
     global aircraft
     #Check whether the aircraft is armed
     if (Mode & 0x01):
+	print "Test2"
         if not(aircraft.isArm()):
             print "Start"
             aircraft.Start()
 
         #Check flight mode for taking off
         if (Mode & 0x02):
-            aircraft.Takeoff()
+            aircraft.Takeoff(Height/1000.0)
+	else:
+	    aircraft.Landing()
 
     else:
         aircraft.Landing()
@@ -44,7 +46,7 @@ def DecodeTCP(Mode, Height, Roll, Pitch, Yaw, Angle):
             time.sleep(0.1)
         
         #Stop aircraft and disarm motors
-        aircraft.Stop():
+        aircraft.Stop()
 #End DecodeFlightMode
 
 ############################ Main Program ############################
@@ -53,7 +55,7 @@ if (aircraft.ConnectDevices(False, False) != 0):
     print "Unable connect aircraft devices"
     sys.exit(1)
 
-
+print "test"
 #Create a TCP/IP socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 # Bind the socket to the port
@@ -87,8 +89,8 @@ while Status:
                 
                 #Split data from text
                 data =  txt_data.split(',')
-                
-                if (len(data) != 8):
+                print len(data)
+                if (len(data) < 7):
                     print >>sys.stderr, 'Data receive error'
                 else:
                     #Check the package validity, data[6]
