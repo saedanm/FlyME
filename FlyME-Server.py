@@ -32,7 +32,19 @@ def DecodeTCP(Mode, Height, Roll, Pitch, Yaw, Angle):
         if not(aircraft.isArm()):
             print "Start"
             aircraft.Start()
-        return
+
+        #Check flight mode for taking off
+        if (Mode & 0x02):
+            aircraft.Takeoff()
+
+    else:
+        aircraft.Landing()
+        #Check whether the aircraft is landed
+        while not(aircraft.IsLanded()):
+            time.sleep(0.1)
+        
+        #Stop aircraft and disarm motors
+        aircraft.Stop():
 #End DecodeFlightMode
 
 ############################ Main Program ############################
@@ -86,6 +98,8 @@ while Status:
                         print data[i]
                         for each_char in data[i]:
                             chksum = chksum + int(each_char)
+                
+                    print "%s,%s"%(data[6], chksum)
                 
                     #When checksum is valid process the aircraft command here
                     if (chksum == int(data[6])):

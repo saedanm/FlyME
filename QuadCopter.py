@@ -128,12 +128,12 @@ class QuadCopter():
     def ArmAircraftLoiter(self, Step, WaitDelay):
         #Override RC channels
         print "Set flight mode to stabilize."
-        self.vehicle.mode = VehicleMode("STABILIZE")
+        self.vehicle.mode = VehicleMode('STABILIZE')
         self.ChangeRCVal(Step, WaitDelay, 1500, 1500, 1000, 1500, 1000)
 
         #Check whether the flight mode now is in "STABILIZE"
         time.sleep(1)
-        if (self.vehicle.mode != VehicleMode("STABILIZE")):
+        if (self.vehicle.mode != VehicleMode('STABILIZE')):
             print "ERROR: Aircraft is not in stabilized mode"
             return False
         
@@ -141,7 +141,8 @@ class QuadCopter():
         print "Arm aircraft in stabilize mode."
         self.vehicle.armed = True
         self.ChangeRCVal(Step, WaitDelay, 1500, 1500, 1000, 2000, 1000)
-                
+        
+        
         if self.CheckAircraftArm(True):
             return False
 
@@ -156,12 +157,12 @@ class QuadCopter():
 
         #Set mode to loiter
         print "Set flight mode to loiter."
-        self.vehicle.mode = VehicleMode("LOITER")
+        self.vehicle.mode = VehicleMode('LOITER')
         self.ChangeRCVal(Step, WaitDelay, 1500, 1500, 1000, 1000, 2000)
 
         #Check whether the flight mode now is in "LOITER"
         time.sleep(1)
-        if (self.vehicle.mode != self.VehicleMode("LOITER")):
+        if (self.vehicle.mode != VehicleMode('LOITER')):
             print "ERROR: Aircraft is not in loiter mode"
             return False
 
@@ -241,9 +242,14 @@ class QuadCopter():
             #Limit RC value to be lower than 2000
             if (self.RC_Override3>2000):
                 self.RC_Override3=2000
+            
+            #Limit RC value to be higher than 1300
+            if (self.RC_Override3<1300):
+                self.RC_Override3=1300
 
             #Update control loop at 10 Hz
             time.sleep(0.1)
+        #End while
 
         print "Height control loop terminated!\r"
         #If exit loop, stay still until all other loops are quit
@@ -370,37 +376,10 @@ class QuadCopter():
         #When no error in connection, return 0
         return 0
 
-############################## Function Take Off ##############################
-    def TakeOff(self, Height):
-        self.Desired_Height=Height
-        self.mymutex = Lock()
-        
-        #Start RC height thread
-        try:
-            thread.start_new_thread(self.RCHeightLoop, ())
-        except:
-            print "Error: Unable to start height control loop"
-            self.Stop()
-            return self.Stop()
-        
-        #Wait until height aircraft gains some height
-        height_threshold = 0.7*self.Desired_Height
-        while (self.Aircraft_Height<height_threshold):
-            time.sleep(0.1)
-        
-        if (self.ldar != None):
-            #Activate Lidar reading and obstacle thread
-            try:
-                thread.start_new_thread(self.LidarReadingLoop, ())
-            except:
-                print "Error: Unable to lidar reading loop"
-                return self.Stop()
-            
-        return True
 
 ############################## Function Start ############################
     def Start(self):
-
+        self.mymutex = Lock()
         #Parameters of the aircraft
         self.Aircraft_Armed=0
         self.Aircraft_Height =0
@@ -409,6 +388,9 @@ class QuadCopter():
 
         #Start the thread loop
         self.Loop = True
+        
+        #Stat height regulation to ground level
+        self.Desired_Height = 0.0
 
         #Try arming sequence to make aircraft in loiter mode
         armresult = False
@@ -440,32 +422,40 @@ class QuadCopter():
         
         #Wait until override loop ready
         time.sleep(1)
-        
-        #Spin motor and wait for other command
-        self.ChangeRCVal(10, 0.1, 1500, 1500, 1500, 1500, 2000)
+
+        #Start RC height thread
+        self.Desired_Height = 0.0
+        try:
+            thread.start_new_thread(self.RCHeightLoop, ())
+            except:
+                print "Error: Unable to start height control loop"
+                    self.Stop()
+                    return self.Stop()
+                
+                #Wait until height aircraft gains some height
+                height_threshold = 0.7*self.Desired_Height
+                while (self.Aircraft_Height<height_threshold):
+                    time.sleep(0.1)
+
+        if (self.ldar != None):
+            #Activate Lidar reading and obstacle thread
+            try:
+                thread.start_new_thread(self.LidarReadingLoop, ())
+                    except:
+                        print "Error: Unable to lidar reading loop"
+                        return self.Stop()
+
 
         return True
 
-###################### Stop aircraft and land ###########################
+###################### Function: Stop aircraft and land ###########################
     def Stop(self):
         #Stop the thread loop
         self.Loop = False
         time.sleep(1)
 
-        print "Landing..."
+        print "Disarm..."
         try:
-            #Lower throttle to land
-            self.ChangeRCVal(10, 0.1, 1500, 1500, 1350, 1500, 2000)
-
-            #Check until the vehicle is land (above the ground 25 cm)
-            while (vehicle.rangefinder.distance >0.25):
-                time.sleep(0.1)
-
-            #Stay on the ground for a while (just in case the aircraft does not land completely)
-            self.ChangeRCVal(10, 0.1, 1500, 1500, 1000, 1500, 2000)
-            time.sleep(1)
-
-            print "Disarm..."
             self.vehicle.armed = False
             self.ChangeRCVal(10, 0.1, 1500, 1500, 1000, 1000, 2000)
             time.sleep(1)
@@ -477,5 +467,30 @@ class QuadCopter():
             pass
         
         return False
+
+
+############################## Function Take Off ##############################
+    def TakeOff(self, Height):
+        print "Taking off..."
+        self.Desired_Height=Height
+
+    
+######################  Funciton: Landing Aircraft  ######################
+    def Landing(self):
+        print "Landing..."
+        self.Desired_Height = 0.0
+
+############################## Function Check aircraft landed ############################
+    def IsLanded(self):
+        try:
+            #Lower limit of TR1 range finder is 20 cm above ground
+            if (self.vehicle.rangefinder.distance <= 0.201):
+                return True
+        except:
+            return False
+        
+        return False
+
+
 
 
