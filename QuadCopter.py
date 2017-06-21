@@ -1,9 +1,7 @@
 """
 The code is designed to use with Raspberry Pi, Pixhawk (via dronekit) and Arduino Leonardo
-
 Creator:            Mana Saedan
 Date Last Edited:   28 Febuary 2017
-
 Development Logs:
     - Making two classes to handle Lidar and HardOverride
     - Seperate thread to 
@@ -63,7 +61,7 @@ class QuadCopter():
     
         self.hardOverride   = None
         self.vehicle        = None
-        self.Lidar          = None
+        self.lidar          = None
 
 
 ################## Function to search for PX4 FMU connect with RPi ###################
@@ -427,23 +425,23 @@ class QuadCopter():
         self.Desired_Height = 0.0
         try:
             thread.start_new_thread(self.RCHeightLoop, ())
-            except:
-                print "Error: Unable to start height control loop"
-                    self.Stop()
-                    return self.Stop()
+        except:
+            print "Error: Unable to start height control loop"
+            self.Stop()
+            return self.Stop()
                 
-                #Wait until height aircraft gains some height
-                height_threshold = 0.7*self.Desired_Height
-                while (self.Aircraft_Height<height_threshold):
-                    time.sleep(0.1)
+            #Wait until height aircraft gains some height
+            height_threshold = 0.7*self.Desired_Height
+            while (self.Aircraft_Height<height_threshold):
+                 time.sleep(0.1)
 
-        if (self.ldar != None):
+        if (self.lidar != None):
             #Activate Lidar reading and obstacle thread
             try:
                 thread.start_new_thread(self.LidarReadingLoop, ())
-                    except:
-                        print "Error: Unable to lidar reading loop"
-                        return self.Stop()
+            except:
+                print "Error: Unable to lidar reading loop"
+                return self.Stop()
 
 
         return True
@@ -470,7 +468,7 @@ class QuadCopter():
 
 
 ############################## Function Take Off ##############################
-    def TakeOff(self, Height):
+    def Takeoff(self, Height):
         print "Taking off..."
         self.Desired_Height=Height
 
@@ -490,7 +488,3 @@ class QuadCopter():
             return False
         
         return False
-
-
-
-
