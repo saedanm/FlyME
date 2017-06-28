@@ -1,7 +1,7 @@
 """
 The code is designed to be a server running on RPi waiting for client to initiate drone launching
 Creator:            Mana Saedan
-Date Last Edited:   4 Febuary 2017
+Date Last Edited:   22 June 2017
 Development Logs:
     - Server waiting for client to connect
     - Data format from client (32-byte-string):  mode,height,roll,pitch,yaw,angle,cheksum,...
@@ -18,19 +18,31 @@ Development Logs:
 """
 
 import sys
+import time
 import socket
 from QuadCopter import QuadCopter
+
+#This function will not work with Windows system
+def getch():
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return ch
 
 #Intialize FlyME class
 aircraft = QuadCopter()
 
 def DecodeTCP(Mode, Height, Roll, Pitch, Yaw, Angle):
     global aircraft
+    
     #Check whether the aircraft is armed
     if (Mode & 0x01):
-	print "Test2"
         if not(aircraft.isArm()):
-            print "Start"
+            print "Aricraft starting"
             aircraft.Start()
 
         #Check flight mode for taking off
@@ -49,13 +61,32 @@ def DecodeTCP(Mode, Height, Roll, Pitch, Yaw, Angle):
         aircraft.Stop()
 #End DecodeFlightMode
 
+def UserKeypress():
+    global sock
+    global Status
+    print "Press key to exit"
+    getch()
+    # Clean up the connection
+    connection.close()
+    #Disarm aircraft if it is armed
+    DecodeTCP(0,0,0,0,0,0)
+    Status = False
+
 ############################ Main Program ############################
 #Connect with aircraft devices, e.g. pixhawk, hard override, lidar,...
 if (aircraft.ConnectDevices(False, False) != 0):
     print "Unable connect aircraft devices"
-    sys.exit(1)
 
-print "test"
+
+#Making thread to read user press keyboard to interrupt the server
+#Activate Lidar reading and obstacle thread
+'''
+try:
+    thread.start_new_thread(UserKeypress, ())
+except:
+    print "Error: User Keypress Thread was not created"
+'''
+
 #Create a TCP/IP socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 # Bind the socket to the port
@@ -83,31 +114,37 @@ while Status:
             
             #Upon receiving 32 bytes, decode text data
             if len(txt_data)>0:
-                
                 #Remove carrirage and line feed
                 txt_data = txt_data.replace('\n', '').replace('\r', '')
-                
                 #Split data from text
                 data =  txt_data.split(',')
                 print len(data)
                 if (len(data) < 7):
-                    print >>sys.stderr, 'Data receive error'
+                    #Do nothing if received incompleted data package
+                    pass
                 else:
                     #Check the package validity, data[6]
                     chksum=0
                     #Go through data from 'Mode' to 'Angle'
                     for i in range(6):
-                        print data[i]
                         for each_char in data[i]:
                             chksum = chksum + int(each_char)
-                
-                    print "%s,%s"%(data[6], chksum)
                 
                     #When checksum is valid process the aircraft command here
                     if (chksum == int(data[6])):
                         DecodeTCP(int(data[0]), int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5]))
 
-    finally:
+    except:
+        print >>sys.stderr, 'Server closed. Press any key to quit'
         # Clean up the connection
-        print >>sys.stderr, 'Server closed.'
         connection.close()
+        #Disarm aircraft if it is armed
+        DecodeTCP(0,0,0,0,0,0)
+        pass
+    finally:
+        print >>sys.stderr, 'Server closed.  Press any key to quit'
+        # Clean up the connection
+        connection.close()
+        #Disarm aircraft if it is armed
+        DecodeTCP(0,0,0,0,0,0)
+#End while(Status)

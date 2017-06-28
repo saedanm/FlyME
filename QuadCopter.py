@@ -1,7 +1,7 @@
 """
 The code is designed to use with Raspberry Pi, Pixhawk (via dronekit) and Arduino Leonardo
 Creator:            Mana Saedan
-Date Last Edited:   28 Febuary 2017
+Date Last Edited:   23 June 2017
 Development Logs:
     - Making two classes to handle Lidar and HardOverride
     - Seperate thread to 
@@ -11,6 +11,7 @@ Development Logs:
         - reading range data
         - Detect obstacle and avoid base on potential field method
 """
+import math
 import time
 import sys
 import serial
@@ -58,6 +59,9 @@ class QuadCopter():
         self.Aircraft_Height =0
         self.Aircraft_Velocity=[0 for i in range(3)]
         self.AirCraft_Battery=0
+        
+        self.errH = 0.0
+        self.errV = 0.0
     
         self.hardOverride   = None
         self.vehicle        = None
@@ -68,7 +72,7 @@ class QuadCopter():
     def FindPixhawk(self):
         ListPortInfo = serial.tools.list_ports.comports()
         for list in ListPortInfo:
-            if (list.product):
+            if (list.product != None):
                 if (list.product.find("PX4") != -1):
                     return list.device
         return None
@@ -178,26 +182,13 @@ class QuadCopter():
         self.ChangeRCVal(Step, WaitDelay, 1500, 1500, 1000, 1500, 2000)
         return True
 
-########################## Aircraft Status Reading Loop #####################
-    def AircraftStatusLoop(self):
-        print "Aircraft status loop starting...\r"
-        while (self.Loop):
-            self.Aircraft_Armed          = self.vehicle.armed
-            self.Aircraft_Height         = self.vehicle.rangefinder.distance
-            self.Aircraft_Velocity       = self.vehicle.velocity
-            self.AirCraft_Battery        = self.vehicle.battery.voltage
-            #Reading the status at 10Hz
-            time.sleep(0.1)
-
-        print "Aircraft status loop terminated!\r"
-        return
-
     ############################## RC H/W Override Loop ########################
     def RCOverideLoop(self):
         print "RC override loop starting...\r"
         #Excecute this loop 50 Hz
         while (self.Loop):
-            self.ChangeRCVal(5, 0.008, self.RC_Override1, self.RC_Override2, self.RC_Override3, self.RC_Override4, 2000)
+            #self.ChangeRCVal(5, 0.008, self.RC_Override1, self.RC_Override2, self.RC_Override3, self.RC_Override4, 2000)
+            self.ChangeRCVal(1, 0.06, self.RC_Override1, self.RC_Override2, self.RC_Override3, self.RC_Override4, 2000)
             time.sleep(0.06)
         
         print "RC override loop terminated!\r"
@@ -205,54 +196,6 @@ class QuadCopter():
         self.ChangeRCVal(10, 0.03, 1500, 1500, 1500, 1500, 2000)
         return
 
-    ############################## Height Control Loop ########################
-    def RCHeightLoop(self):
-        print "Height control loop Starting...\r"
-        #Define maximum height error for one time step
-        max_err_height = 0.075    #meter
-        err_cnt=0
-
-        #Declare and initialize array
-        err_height_record = []
-        for i in range(5):
-            err_height_record.append(0)
-
-        while (self.Loop):
-            err_height = self.Desired_Height -self.Aircraft_Height
-            
-            #Limit error to maximum height error
-            if (err_height>max_err_height):
-                err_height =max_err_height
-            
-            #Accumulate height error
-            err_height_record[err_cnt] = err_height
-
-            err_cnt = err_cnt+1
-            if (err_cnt>4):
-                err_cnt=0
-                       
-            sum_err = err_height_record[0] +err_height_record[1] +err_height_record[2] +err_height_record[3] +err_height_record[4]
-            
-            #Calculate RC value
-            #       Middle Position + Kp * err + Ki * sum_err - Kd*velocity
-            self.RC_Override3 = int(1500 +1500*err_height +20*sum_err -200*self.Aircraft_Velocity[2])
-        
-            #Limit RC value to be lower than 2000
-            if (self.RC_Override3>2000):
-                self.RC_Override3=2000
-            
-            #Limit RC value to be higher than 1300
-            if (self.RC_Override3<1300):
-                self.RC_Override3=1300
-
-            #Update control loop at 10 Hz
-            time.sleep(0.1)
-        #End while
-
-        print "Height control loop terminated!\r"
-        #If exit loop, stay still until all other loops are quit
-        self.RC_Override3 = 1500
-        return
 
     ############################### LIDAR Reading Loop ##########################
     def LidarReadingLoop(self):
@@ -281,7 +224,6 @@ class QuadCopter():
     ######################### Obstacle avoidance loop #######################
     #Thread to construct grid map
     def ObstacleAvoidance(self):
-
         #Check obstacle only within this range (min - max)
         min_range = 5.0
         max_range = 70.0
@@ -335,13 +277,9 @@ class QuadCopter():
         else:
             rc1=1500.0 + 200.0/(2.0*force_p_threshold)
 
-
         self.RC_Override2 = int(rc2)
         self.RC_Override1 = int(rc1)
 
-        ##### Print out the battery voltage here ####
-        stdout.write("\rBattery Voltage: %0.1f" %(self.AirCraft_Battery))
-        stdout.flush()
         return
 
 
@@ -369,7 +307,6 @@ class QuadCopter():
             self.lidar = Lidar()
             if (self.lidar.Connect()==False):
                 return 3
-        
 
         #When no error in connection, return 0
         return 0
@@ -378,6 +315,8 @@ class QuadCopter():
 ############################## Function Start ############################
     def Start(self):
         self.mymutex = Lock()
+        self.airmutex = Lock()
+        
         #Parameters of the aircraft
         self.Aircraft_Armed=0
         self.Aircraft_Height =0
@@ -386,9 +325,6 @@ class QuadCopter():
 
         #Start the thread loop
         self.Loop = True
-        
-        #Stat height regulation to ground level
-        self.Desired_Height = 0.0
 
         #Try arming sequence to make aircraft in loiter mode
         armresult = False
@@ -399,14 +335,6 @@ class QuadCopter():
 
         if (not armresult):
             print "ERROR: Cannot arm aircraft in loiter mode"
-            self.Stop()
-            return self.Stop()
-
-        #Start Aircraft status loop
-        try:
-            thread.start_new_thread(self.AircraftStatusLoop, ())
-        except:
-            print "Error: Unable to start height control loop"
             self.Stop()
             return self.Stop()
 
@@ -424,17 +352,13 @@ class QuadCopter():
         #Start RC height thread
         self.Desired_Height = 0.0
         try:
-            thread.start_new_thread(self.RCHeightLoop, ())
+            thread.start_new_thread(self.RCHeightControlLoop, ())
         except:
             print "Error: Unable to start height control loop"
             self.Stop()
             return self.Stop()
-                
-            #Wait until height aircraft gains some height
-            height_threshold = 0.7*self.Desired_Height
-            while (self.Aircraft_Height<height_threshold):
-                 time.sleep(0.1)
 
+        #Start lidar reading thread
         if (self.lidar != None):
             #Activate Lidar reading and obstacle thread
             try:
@@ -442,49 +366,172 @@ class QuadCopter():
             except:
                 print "Error: Unable to lidar reading loop"
                 return self.Stop()
-
-
         return True
 
 ###################### Function: Stop aircraft and land ###########################
     def Stop(self):
-        #Stop the thread loop
-        self.Loop = False
-        time.sleep(1)
-
         print "Disarm..."
         try:
-            self.vehicle.armed = False
             self.ChangeRCVal(10, 0.1, 1500, 1500, 1000, 1000, 2000)
+            self.vehicle.armed = False
             time.sleep(1)
-
-            self.vehicle.close()
-            self.hardOverride.Close()
-            self.lidar.Close()
         except:
             pass
-        
         return False
 
 
 ############################## Function Take Off ##############################
     def Takeoff(self, Height):
-        print "Taking off..."
+        if self.vehicle==None: return
+        print ("Taking off to height=%0.2f")%(Height)
         self.Desired_Height=Height
 
     
 ######################  Funciton: Landing Aircraft  ######################
     def Landing(self):
+        if self.vehicle==None: return
         print "Landing..."
         self.Desired_Height = 0.0
 
 ############################## Function Check aircraft landed ############################
     def IsLanded(self):
+        if self.vehicle==None: return True
         try:
             #Lower limit of TR1 range finder is 20 cm above ground
-            if (self.vehicle.rangefinder.distance <= 0.201):
+            if (self.Aircraft_Height <= 0.201):
                 return True
         except:
             return False
         
         return False
+    
+################ Function: Close connection ##################
+    def Close():
+        self.Loop = False
+        self.vehicle.close()
+        self.hardOverride.Close()
+        self.lidar.Close()
+
+################ Function: Cubic polynomial height planning ##################
+    def _cubic_coef(self, MaxVel, TimeStep):
+        
+        h = self.Desired_Height -self.Aircraft_Height
+        t = math.fabs(h)/MaxVel
+        
+        #If time to reach target is too small, stop the aircraft at current height
+        if (t<0.001):
+            self.errH = 0.0
+            self.errV = 0.0
+            return
+        
+        #Calculate cubic coefficient
+        tt = t*t    #t^2
+        ttt = tt*t  #t^3
+        a1 = self.Aircraft_Velocity[2]
+        a2 = 3*h/tt  -2*self.Aircraft_Velocity[2]/t
+        a3 = 2*h/ttt +3*self.Aircraft_Velocity[2]/tt
+        
+        #Reuse variable t, tt and ttt
+        t  = TimeStep
+        tt = TimeStep*TimeStep
+        ttt= t*tt
+    
+        self.errH = a1*t +a2*tt+ a3*ttt
+        self.errV = 2*a2*t +3*a3*tt
+    
+    
+############################## Height Control Loop ########################
+    def RCHeightControlLoop(self):
+        print "Height control loop Starting...\r"
+        #Define maximum height error for one time step
+        max_err_height = 0.075    #meter
+        err_cnt=0
+            
+        #Declare and initialize array
+        err_height_record = []
+        for i in range(5):
+            err_height_record.append(0)
+
+        batt_cnt=0
+        batt_vol=[]
+        self.AirCraft_Battery = self.vehicle.battery.voltage
+        for i in range(10):
+            batt_vol.append(0)
+            batt_vol[i] = self.AirCraft_Battery
+        
+        while (self.Loop):
+            #Read aircraft status
+            self.Aircraft_Armed          = self.vehicle.armed
+            self.Aircraft_Height         = self.vehicle.rangefinder.distance
+            self.Aircraft_Velocity       = self.vehicle.velocity
+            self.AirCraft_Battery        = self.vehicle.battery.voltage
+            
+            #Calculate height in next time step with max velocity 1 m/s and 0.1 second time step
+            self._cubic_coef(0.5, 0.1)
+            
+            #Calculate height error
+            err_height = self.Desired_Height -self.Aircraft_Height
+               
+            if (math.fabs(err_height)<0.3):
+                max_err_height = 0.025
+            else:
+                max_err_height = 0.1
+                
+            #Limit error to maximum height error
+            if (math.fabs(err_height)>max_err_height):
+                err_height = math.copysign(max_err_height, err_height)
+            
+            #Accumulate height error
+            err_height_record[err_cnt] = err_height
+            err_cnt = err_cnt+1
+            if (err_cnt>4):
+                err_cnt=0
+
+            sum_err = err_height_record[0] +err_height_record[1] +err_height_record[2] +err_height_record[3] +err_height_record[4]
+
+            #Calculate RC value = Middle Position + Kp * err + Ki * sum_err - Kd*velocity
+            throttle = 1500 +1500*err_height +20*sum_err -100*self.Aircraft_Velocity[2]
+    
+            #Limit RC value to be lower than 2000
+            if (throttle>2000):
+                self.RC_Override3=2000
+            else:
+                self.RC_Override3=int(throttle)
+            
+            #Limit RC value to be higher than 1450
+            if (throttle<1490):
+                self.RC_Override3=1490
+            else:
+                self.RC_Override3=int(throttle)
+
+            #Update control loop at 10 Hz
+            time.sleep(0.1)
+
+            #Check batt status
+            batt_vol[batt_cnt] = self.AirCraft_Battery
+            batt_stat = batt_vol[0]+batt_vol[1]+batt_vol[2]+batt_vol[3]+batt_vol[4]+batt_vol[5]+batt_vol[6]+batt_vol[7]+batt_vol[8]+batt_vol[9]
+            batt_stat = batt_stat/10.0
+            if (batt_stat<13.9): print("Warning: Battery Low!")
+
+            batt_cnt = batt_cnt+1
+            if (batt_cnt>9): batt_cnt=0
+
+            ##### Print out the battery voltage here ####
+            stdout.write("\rBattery Voltage: %d, %0.1f" %(self.RC_Override3, self.AirCraft_Battery))
+            #stdout.write("\rErr, Batt, Throttle: %d, %0.2f,%0.2f" %(self.RC_Override3, self.errH, self.errV))
+            stdout.flush()
+            
+            doonce=True
+            if (self.Aircraft_Height >0.8): doonce=False
+            if (doonce==False):
+                #stdout.write("\nErr, Batt, Throttle: %d, %0.2f,%0.2f" %(self.RC_Override3, self.errH, self.errV))
+                #stdout.flush()
+                doonce=True
+
+            #End while
+                    
+        print "Height control loop terminated!\r"
+        #If exit loop, stay still until all other loops are quit
+        self.RC_Override3 = 1500
+        return
+
